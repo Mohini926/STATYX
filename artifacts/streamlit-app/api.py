@@ -66,6 +66,8 @@ class CleanRequest(DatasetPayload):
 
 class AiRequest(DatasetPayload):
     objective: Optional[str] = None
+    targetColumn: Optional[str] = None
+    groupColumn: Optional[str] = None
 
 
 class VisualizationRequest(DatasetPayload):
@@ -103,6 +105,8 @@ def encode_png(fig) -> str:
 
 
 def compute_objective_tests(df: pd.DataFrame, objective: str) -> List[Dict[str, Any]]:
+    seen_tests: set = set()
+    seen_test_types: set = set()
     objective_embedding = MODEL.encode([f"passage: {objective}"], convert_to_numpy=True)[0]
     scores = [
         (name, float(np.dot(objective_embedding, TEST_EMBEDDINGS[i]) /
@@ -170,7 +174,7 @@ def compute_objective_tests(df: pd.DataFrame, objective: str) -> List[Dict[str, 
         "anova": [(num, cat) for num in numeric_cols for cat in cat_cols],
     }
 
-    seen_tests = set()
+    seen_test_types = set()
     for test_name, confidence in scores:
         if test_name in ["cox_regression", "kaplan_meier"]:
             continue
@@ -186,12 +190,19 @@ def compute_objective_tests(df: pd.DataFrame, objective: str) -> List[Dict[str, 
                 if identifier in seen_tests:
                     continue
 
+                if test_name in seen_test_types:
+                    continue
+
                 results.append({
                     "test": display_name,
                     "confidence": round(float(confidence), 3),
                     "result": test_result,
+                    "target": cols[0],
+                    "group": cols[1],
+                    "test_key": test_name,
                 })
                 seen_tests.add(identifier)
+                seen_test_types.add(test_name)
 
                 if len(results) >= 5:
                     break
@@ -219,6 +230,9 @@ def compute_objective_tests(df: pd.DataFrame, objective: str) -> List[Dict[str, 
                         "test": display_name,
                         "confidence": round(float(confidence), 3),
                         "result": test_result,
+                        "target": cols[0],
+                        "group": cols[1],
+                        "test_key": test_name,
                     })
                     seen_tests.add(identifier)
                     if len(results) >= 3:
@@ -377,7 +391,32 @@ def ai_insights(request: AiRequest) -> JSONResponse:
     insights = generate_auto_insights(df)
     objective = request.objective or ""
     tests = compute_objective_tests(df, objective) if objective else []
-    return JSONResponse(content=jsonable_encoder({"insights": insights, "tests": tests, "columns": list(df.columns)}))
+    target_col = (request.targetColumn or "").strip().lower()
+    group_col = (request.groupColumn or "").strip().lower()
+
+    if target_col and group_col:
+        filtered = []
+        for t in tests:
+            lhs = str(t.get("target", "")).lower()
+            rhs = str(t.get("group", "")).lower()
+            if lhs == target_col and rhs == group_col:
+                filtered.append(t)
+        if filtered:
+            tests = filtered
+
+    top_tests = tests[:5]
+    remaining_tests = tests[5:]
+    inferred_target = top_tests[0]["target"] if top_tests else None
+    inferred_group = top_tests[0]["group"] if top_tests else None
+    return JSONResponse(content=jsonable_encoder({
+        "insights": insights,
+        "tests": top_tests,
+        "topTests": top_tests,
+        "remainingTests": remaining_tests,
+        "inferredTarget": inferred_target,
+        "inferredGroup": inferred_group,
+        "columns": list(df.columns),
+    }))
 
 
 @app.post("/api/python/cross-tab")

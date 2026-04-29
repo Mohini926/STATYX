@@ -132,7 +132,9 @@ export default function Analytics() {
   const [visualizationColumns, setVisualizationColumns] = useState<string[]>([]);
 
   const [objective, setObjective] = useState<string>("");
-  const [aiResult, setAiResult] = useState<{ insights: any[]; tests: any[] } | null>(null);
+  const [aiResult, setAiResult] = useState<{ insights: any[]; tests: any[]; topTests?: any[]; remainingTests?: any[]; inferredTarget?: string; inferredGroup?: string } | null>(null);
+  const [aiTarget, setAiTarget] = useState<string>("");
+  const [aiGroup, setAiGroup] = useState<string>("");
 
   const [crossRow, setCrossRow] = useState<string>("");
   const [crossCol, setCrossCol] = useState<string>("");
@@ -507,8 +509,10 @@ export default function Analytics() {
     setError(null);
     setLoading(true);
     try {
-      const result = await runAiInsights(datasetRows, objective);
-      setAiResult({ insights: result.insights, tests: result.tests });
+      const result = await runAiInsights(datasetRows, objective, aiTarget || undefined, aiGroup || undefined);
+      setAiResult(result);
+      if (result.inferredTarget) setAiTarget(result.inferredTarget);
+      if (result.inferredGroup) setAiGroup(result.inferredGroup);
       setSuccess("AI analysis completed.");
     } catch (err: any) {
       setError(err.message || "AI analysis failed.");
@@ -1185,6 +1189,24 @@ export default function Analytics() {
                     <Button onClick={handleRunAiAnalysis} disabled={loading}>
                       <BrainCircuit className="mr-2 h-4 w-4" /> Run Suggested Tests
                     </Button>
+                    {datasetColumns.length > 1 && (
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div>
+                          <label className="block text-sm font-medium mb-2">Target column (optional)</label>
+                          <select value={aiTarget} onChange={(e) => setAiTarget(e.target.value)} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
+                            <option value="">Auto-select</option>
+                            {datasetColumns.map((column) => <option key={column} value={column}>{column}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium mb-2">Group/relevant column (optional)</label>
+                          <select value={aiGroup} onChange={(e) => setAiGroup(e.target.value)} className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm">
+                            <option value="">Auto-select</option>
+                            {datasetColumns.map((column) => <option key={column} value={column}>{column}</option>)}
+                          </select>
+                        </div>
+                      </div>
+                    )}
 
                     {aiResult && (
                       <div className="space-y-6 mt-6 border-t border-border pt-6">
@@ -1201,10 +1223,10 @@ export default function Analytics() {
                           </div>
                         )}
 
-                        {aiResult.tests && aiResult.tests.length > 0 && (
+                        {(aiResult.topTests ?? aiResult.tests) && (aiResult.topTests ?? aiResult.tests).length > 0 && (
                           <div className="space-y-4">
-                            <h3 className="text-lg font-semibold">📈 Suggested Tests</h3>
-                            {aiResult.tests.map((test, idx) => {
+                            <h3 className="text-lg font-semibold">📈 Top 5 Suggested Tests (Executed)</h3>
+                            {(aiResult.topTests ?? aiResult.tests).map((test, idx) => {
                               const pVal = test.result?.p_value;
                               const isSignificant = pVal !== null && pVal !== undefined && pVal < 0.05;
 
@@ -1280,7 +1302,19 @@ export default function Analytics() {
                           </div>
                         )}
 
-                        {!aiResult.tests || aiResult.tests.length === 0 ? (
+                        {aiResult.remainingTests && aiResult.remainingTests.length > 0 && (
+                          <div className="rounded-xl border border-border bg-card p-4">
+                            <h3 className="text-lg font-semibold mb-2">Other possible tests</h3>
+                            <p className="text-sm text-muted-foreground">These are available but not auto-executed in top-5 mode.</p>
+                            <ul className="list-disc pl-5 mt-2 text-sm space-y-1">
+                              {aiResult.remainingTests.map((test: any, idx: number) => (
+                                <li key={idx}>{test.test}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {!(aiResult.topTests ?? aiResult.tests) || (aiResult.topTests ?? aiResult.tests).length === 0 ? (
                           <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 p-4">
                             <p className="text-sm text-amber-700">
                               Only limited suitable tests could be applied to this dataset. Try refining your objective or ensure the dataset has sufficient numeric and categorical columns.
